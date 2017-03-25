@@ -13,5 +13,5 @@ slp.o: slp.c slp.h util.h
 util.o: util.c util.h
 	cc -g -c util.c
 
-clean: 
+clean:
 	rm -f a.out util.o prog1.o slp.o main.o
