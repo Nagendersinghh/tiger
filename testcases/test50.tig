@@ -1,0 +1,12 @@
+/* this file contains test related to types */
+
+let
+	type b = string
+	type c = int
+	type d = c
+	type e = d
+	var a:b := "hello"
+in
+	a
+end
+

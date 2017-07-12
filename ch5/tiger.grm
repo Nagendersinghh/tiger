@@ -1,0 +1,206 @@
+%{
+#include <stdio.h>
+#include "util.h"
+#include "symbol.h"
+#include "errormsg.h"
+#include "absyn.h"
+#include "prabsyn.h"
+
+int yylex(void); /* function prototype */
+
+A_exp absyn_root;
+
+void yyerror(char *s) {
+	EM_error(EM_tokPos, "%s", s);
+}
+%}
+
+
+%union {
+	int pos;
+	int ival;
+	string sval;
+	A_var var;
+	A_exp exp;
+	A_dec dec;
+	A_ty type;
+	A_field field;
+	A_fieldList fieldList;
+	A_expList expList;
+	A_fundec fundec;
+	A_fundecList fundecList;
+	A_decList decList;
+	A_namety namety;
+	A_nametyList nametyList;
+	A_efield efield;
+	A_efieldList efieldList;
+}
+
+%token <sval> ID STRING
+%token <ival> INT
+
+%token
+	COMMA COLON SEMICOLON LPAREN RPAREN LBRACK RBRACK
+	LBRACE RBRACE DOT
+	PLUS MINUS TIMES DIVIDE EQ NEQ LT LE GT GE
+	AND OR ASSIGN
+	ARRAY IF THEN ELSE WHILE FOR TO DO LET IN END OF
+	BREAK NIL
+	FUNCTION VAR TYPE
+
+%type <exp> expression arithmetic_expression comparison program selection boolean function_cal record_creation assignment loop array_creation
+%type <decList> declaration_sequence 
+%type <dec> declaration var_declaration
+%type <nametyList> type_declarations
+%type <namety> type_declaration
+%type <type> type
+%type <fieldList> tyfields type_field_sequence
+%type <efieldList> field_list
+%type <fundecList> function_declarations
+%type <fundec> function_declaration
+%type <expList> expression_sequence expression_list
+%type <var> lvalue lvalue_ one
+
+%start program
+
+%nonassoc DO OF
+%nonassoc THEN /* ELSE must come after THEN! */
+%nonassoc ELSE
+%left SEMICOLON
+%left ASSIGN
+%left OR
+%left AND
+%nonassoc EQ NEQ GT LT GE LE
+%left PLUS MINUS
+%left TIMES DIVIDE
+%left UMINUS
+
+%%
+
+program: expression	{absyn_root=$1;}
+
+expression
+	: INT		{$$ = A_IntExp(EM_tokPos, $1);}
+	| STRING	{$$ = A_StringExp(EM_tokPos, $1);}
+	| lvalue	{$$ = A_VarExp(EM_tokPos, $1);}
+	| NIL		{$$ = A_NilExp(EM_tokPos);}
+	| LPAREN expression_sequence RPAREN	{$$ = A_SeqExp(EM_tokPos, $2);}
+	| arithmetic_expression			{$$ = $1;}
+	| selection				{$$ = $1;}
+	| comparison				{$$ = $1;}
+	| boolean				{$$ = $1;}
+	| MINUS expression %prec UMINUS		{$$ = A_OpExp(EM_tokPos, A_minusOp, A_IntExp(EM_tokPos, 0), $2);}
+	| function_cal				{$$ = $1;}
+	| record_creation			{$$ = $1;}
+	| array_creation			{$$ = $1;}
+	| assignment				{$$ = $1;}
+	| loop					{$$ = $1;}
+	| BREAK					{$$ = A_BreakExp(EM_tokPos);}
+	| LPAREN RPAREN				{$$ = A_SeqExp(EM_tokPos, NULL);}
+	| LET declaration_sequence IN END	{$$ = A_LetExp(EM_tokPos, $2, A_SeqExp(EM_tokPos, NULL));}
+	| LET declaration_sequence IN expression_sequence END	{$$ = A_LetExp(EM_tokPos, $2, A_SeqExp(EM_tokPos, $4));}
+
+declaration_sequence
+	:					{$$ = NULL;}
+	| declaration declaration_sequence	{$$ = A_DecList($1, $2);}
+
+declaration
+	: type_declarations			{$$ = A_TypeDec(EM_tokPos, $1);}
+	| var_declaration			{$$ = $1;}
+	| function_declarations			{$$ = A_FunctionDec(EM_tokPos, $1);}
+
+type_declarations
+	: type_declaration			{$$ = A_NametyList($1, NULL);}
+	| type_declaration type_declarations	{$$ = A_NametyList($1, $2);}
+
+type_declaration
+	: TYPE ID EQ type			{$$ = A_Namety(S_Symbol($2), $4);}
+
+type
+	: ID					{$$ = A_NameTy(EM_tokPos, S_Symbol($1));}
+	| LBRACE tyfields RBRACE		{$$ = A_RecordTy(EM_tokPos, $2);}
+	| ARRAY OF ID				{$$ = A_ArrayTy(EM_tokPos, S_Symbol($3));}
+
+tyfields
+	:					{$$ = NULL;}
+	| type_field_sequence			{$$ = $1;}
+
+type_field_sequence
+	: ID COLON ID				{$$ = A_FieldList(A_Field(EM_tokPos, S_Symbol($1), S_Symbol($3)), NULL);}
+	| ID COLON ID COMMA type_field_sequence {$$ = A_FieldList(A_Field(EM_tokPos, S_Symbol($1), S_Symbol($3)), $5);}
+
+var_declaration
+	: VAR ID ASSIGN expression		{$$ = A_VarDec(EM_tokPos, S_Symbol($2), NULL, $4);}
+	| VAR ID COLON ID ASSIGN expression	{$$ = A_VarDec(EM_tokPos, S_Symbol($2), S_Symbol($4), $6);}
+function_declarations
+	: function_declaration				{$$ = A_FundecList($1, NULL);}
+	| function_declaration function_declarations	{$$ = A_FundecList($1, $2);}
+
+function_declaration
+	: FUNCTION ID LPAREN tyfields RPAREN EQ expression		{$$ = A_Fundec(EM_tokPos, S_Symbol($2), $4, NULL, $7);}
+	| FUNCTION ID LPAREN tyfields RPAREN COLON ID EQ expression	{$$ = A_Fundec(EM_tokPos, S_Symbol($2), $4, S_Symbol($7), $9);}
+
+lvalue
+	: ID						{$$ = A_SimpleVar(EM_tokPos, S_Symbol($1));}
+	| lvalue_					{$$ = $1;}
+lvalue_
+	: one						{$$ = $1;}
+	| lvalue_ DOT ID				{$$ = A_FieldVar(EM_tokPos, $1, S_Symbol($3));} 
+	| lvalue_ LBRACK expression RBRACK		{$$ = A_SubscriptVar(EM_tokPos, $1, $3);}
+one
+	: ID DOT ID					{$$ = A_FieldVar(EM_tokPos, A_SimpleVar(EM_tokPos, S_Symbol($1)), S_Symbol($3));}
+	| ID LBRACK expression RBRACK			{$$ = A_SubscriptVar(EM_tokPos, A_SimpleVar(EM_tokPos, S_Symbol($1)), $3);}
+
+expression_sequence
+	: expression					{$$ = A_ExpList($1, NULL);}
+	| expression SEMICOLON expression_sequence 	{$$ = A_ExpList($1, $3);}
+
+arithmetic_expression
+	: expression PLUS expression			{$$ = A_OpExp(EM_tokPos, A_plusOp, $1, $3);}
+	| expression MINUS expression			{$$ = A_OpExp(EM_tokPos, A_minusOp, $1, $3);}
+	| expression TIMES expression			{$$ = A_OpExp(EM_tokPos, A_timesOp, $1, $3);}
+	| expression DIVIDE expression			{$$ = A_OpExp(EM_tokPos, A_divideOp, $1, $3);}
+
+comparison
+	: expression EQ expression			{$$ = A_OpExp(EM_tokPos, A_eqOp, $1, $3);}
+	| expression NEQ expression			{$$ = A_OpExp(EM_tokPos, A_neqOp, $1, $3);}
+	| expression GT expression			{$$ = A_OpExp(EM_tokPos, A_gtOp, $1, $3);}
+	| expression LT expression			{$$ = A_OpExp(EM_tokPos, A_ltOp, $1, $3);}
+	| expression GE expression			{$$ = A_OpExp(EM_tokPos, A_geOp, $1, $3);}
+	| expression LE expression			{$$ = A_OpExp(EM_tokPos, A_leOp, $1, $3);}
+
+boolean
+	: expression OR expression			{$$ = A_IfExp(EM_tokPos, $1, A_IntExp(EM_tokPos, 1), $3);}
+	| expression AND expression			{$$ = A_IfExp(EM_tokPos, $1, A_IntExp(EM_tokPos, 0), $3);}
+
+selection
+	: IF expression THEN expression ELSE expression	{$$ = A_IfExp(EM_tokPos, $2, $4, $6);}
+	| IF expression THEN expression			{$$ = A_IfExp(EM_tokPos, $2, $4, NULL);}
+
+function_cal
+	: ID LPAREN expression_list RPAREN		{$$ = A_CallExp(EM_tokPos, S_Symbol($1), $3);}
+
+expression_list
+	:						{$$ = NULL;}
+	| expression					{$$ = A_ExpList($1,NULL);}
+	| expression COMMA expression_list		{$$ = A_ExpList($1, $3);}
+
+record_creation
+	: ID LBRACE field_list RBRACE			{$$ = A_RecordExp(EM_tokPos, S_Symbol($1), $3);}
+
+field_list
+	:						{$$ = NULL;}
+	| ID EQ expression				{$$ = A_EfieldList(A_Efield(S_Symbol($1), $3), NULL);}
+	| ID EQ expression COMMA field_list 		{$$ = A_EfieldList(A_Efield(S_Symbol($1), $3), $5);}
+
+array_creation
+	: ID LBRACK expression RBRACK OF expression	{$$ = A_ArrayExp(EM_tokPos, S_Symbol($1), $3, $6);} 
+
+assignment
+	: lvalue ASSIGN expression			{$$ = A_AssignExp(EM_tokPos, $1, $3);} 
+
+loop
+	: WHILE expression DO expression		{$$ = A_WhileExp(EM_tokPos, $2, $4);}
+	| FOR ID ASSIGN expression TO expression DO expression	{$$ = A_ForExp(EM_tokPos, S_Symbol($2), $4, $6, $8);}
+%%
+

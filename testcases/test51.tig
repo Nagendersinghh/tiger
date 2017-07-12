@@ -1,0 +1,8 @@
+/* array type check */
+let
+	type a = array of int
+	var a := a [10] of 10
+in
+	a
+end
+
